@@ -667,7 +667,7 @@ function setStatus(st){const el=document.getElementById('savest');if(!el)return;
  if(st==='saving'){el.className='savest';el.textContent='Enregistrement…';el.title='';return}
  if(CLOUD.doc&&CLOUD.ok){el.className='savest ok';el.textContent='Enregistré';el.title='Vos réponses sont enregistrées dans votre compte : vous les retrouverez sur tous vos appareils.'}
  else if(storeOK){el.className='savest ok';el.textContent='Enregistré';el.title='Vos réponses sont enregistrées dans ce navigateur, sur cet appareil.'}
- else{el.className='savest warn';el.textContent='Non enregistré';el.title="Ce navigateur bloque l'enregistrement. Utilisez « Sauvegarder mes réponses dans un fichier » en bas de page."}}
+ else{el.className='savest warn';el.textContent='Non enregistré';el.title="Ce navigateur bloque l'enregistrement. Utilisez « Enregistrer mes réponses (Word) » en bas de page."}}
 function cloudQueue(delay){if(!CLOUD.doc)return;CLOUD.dirty=true;clearTimeout(CLOUD.t);CLOUD.t=setTimeout(cloudFlush,delay==null?1200:delay)}
 async function cloudFlush(){
  if(!CLOUD.doc||!CLOUD.dirty||CLOUD.busy)return;
@@ -695,22 +695,99 @@ async function cloudInit(){
  }catch(e){CLOUD.doc=null;setStatus()}}
 window.addEventListener('pagehide',()=>{flush();cloudFlush()});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'){flush();cloudFlush()}});
-/* Sauvegarde dans un fichier */
-async function exportFile(){
+/* Sauvegarde dans un document Word (lisible, et réimportable) */
+let docxP=null,zipP=null;
+function loadScript(src,glob){return new Promise((res,rej)=>{if(window[glob])return res(window[glob]);const s=document.createElement('script');s.src=src;s.onload=()=>window[glob]?res(window[glob]):rej(new Error(glob));s.onerror=()=>rej(new Error('load'));document.head.appendChild(s)})}
+function loadDocx(){return docxP||(docxP=loadScript('https://cdn.jsdelivr.net/npm/docx@9.6.1/dist/index.iife.js','docx').catch(e=>{docxP=null;throw e}))}
+function loadZip(){return zipP||(zipP=loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js','JSZip').catch(e=>{zipP=null;throw e}))}
+const plain=h=>String(h??'').replace(/<[^>]+>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+function answerLines(q){
+ const v=S.answers[q.id];
+ if(q.type==='tags'){const t=tagsOf(q.cid);return t.length?[t.join(', ')]:[]}
+ if(v==null)return [];
+ switch(q.type){
+  case 'text':case 'line':case 'poster':return String(v).trim()?String(v).trim().split(/\n+/):[];
+  case 'list':return v.map((x,i)=>x&&String(x).trim()?`${i+1}. ${String(x).trim()}`:null).filter(Boolean);
+  case 'pick':case 'chips':return v.length?[v.join(', ')]:[];
+  case 'qualities':{const a=Object.keys(v).filter(k=>v[k]===2),b=Object.keys(v).filter(k=>v[k]===1),o=[];if(a.length)o.push('Qualités principales : '+a.join(', '));if(b.length)o.push('Autres qualités : '+b.join(', '));return o}
+  case 'strengths':{const a=Object.keys(v).filter(k=>v[k]===1),b=Object.keys(v).filter(k=>v[k]===2),o=[];if(a.length)o.push('Mes forces : '+a.join(', '));if(b.length)o.push('Moins familières : '+b.join(', '));return o}
+  case 'table':return v.filter(r=>r&&r.some(c=>c!=null&&String(c).trim()!=='')).map(r=>q.cols.map((c,i)=>r[i]!=null&&String(r[i]).trim()!==''?`${c.l} : ${r[i]}${c.score?'/10':''}`:null).filter(Boolean).join('  ·  '));
+  case 'range':return [`${v} ${q.unit}`];
+  case 'scale':return [`${v} / ${q.max} (${q.lo} → ${q.hi})`];
+ }
+ return [];}
+function buildDoc(D){
+ const INK='232734',MUTED='5C6271',LUPIN='5D43A0';
+ const COL={aime:'C9850F',sait:'3E8A43',val:'C2434A',act:'178A7E'};
+ const r=(text,o={})=>new D.TextRun(Object.assign({text,color:INK},o));
+ const p=(text,o={},po={})=>new D.Paragraph(Object.assign({spacing:{after:120}},po,{children:[r(text,o)]}));
+ const h=(text,lvl,color)=>new D.Paragraph({heading:lvl,spacing:{before:lvl===D.HeadingLevel.HEADING_1?360:240,after:120},children:[r(text,{color:color||INK,bold:true})]});
+ const kids=[];
+ const today=new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
+ kids.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{before:1200,after:120},children:[r('IKIGAISens™',{size:56,bold:true,color:LUPIN})]}));
+ kids.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{after:120},children:[r('En quête de ma raison d’être',{size:32})]}));
+ kids.push(new D.Paragraph({alignment:D.AlignmentType.CENTER,spacing:{after:600},children:[r('Mes réponses au '+today+' · '+Math.round(overall()*100)+' % du parcours',{color:MUTED})]}));
+ if(S.stmt.text){kids.push(h('Mon ikigai',D.HeadingLevel.HEADING_1,LUPIN));kids.push(p(S.stmt.text,{size:28,italics:true}))}
+ if(S.answers.v_premier){kids.push(p('Mon premier pas : '+S.answers.v_premier,{bold:true}))}
+ CIRCLES.forEach(c=>{
+  kids.push(new D.Paragraph({pageBreakBefore:true,heading:D.HeadingLevel.HEADING_1,spacing:{after:80},children:[r(`Cercle ${c.n} : ${c.name}`,{bold:true,color:COL[c.id]})]}));
+  kids.push(p(c.lead,{color:MUTED,italics:true}));
+  let any=false;
+  c.sections.forEach(sec=>{
+   const items=sec.q.map(q=>[q,answerLines(q)]).filter(([,l])=>l.length);
+   if(!items.length)return;any=true;
+   kids.push(h(sec.bilan?sec.t:`${sec.k}. ${sec.t}`,D.HeadingLevel.HEADING_2,COL[c.id]));
+   items.forEach(([q,lines])=>{
+    kids.push(p(plain(q.l),{bold:true},{spacing:{before:120,after:60}}));
+    lines.forEach(l=>kids.push(p(l,{},{indent:{left:280},spacing:{after:60}})));
+   });
+  });
+  if(!any)kids.push(p('Ce cercle n’a pas encore été rempli.',{color:MUTED}));
+ });
+ const g=groups();
+ kids.push(new D.Paragraph({pageBreakBefore:true,heading:D.HeadingLevel.HEADING_1,children:[r('Ma rosace',{bold:true,color:LUPIN})]}));
+ IDS.forEach(i=>kids.push(new D.Paragraph({spacing:{after:80},children:[r(CBY[i].name+' : ',{bold:true,color:COL[i]}),r(tagsOf(i).join(', ')||'—')]})));
+ const inter=Object.keys(g).filter(k=>k.includes('+')).sort((a,b)=>b.split('+').length-a.split('+').length);
+ if(inter.length){kids.push(h('Mes intersections',D.HeadingLevel.HEADING_2));inter.forEach(k=>kids.push(new D.Paragraph({spacing:{after:80},children:[r(REGION[k].t+' : ',{bold:true}),r(g[k].join(', '))]})))}
+ kids.push(h('Ce que dit ma rosace',D.HeadingLevel.HEADING_2));
+ diagnostic().forEach(x=>kids.push(p(plain(x))));
+ kids.push(p('Pour reprendre votre parcours, ouvrez IKIGAISens et choisissez « Reprendre depuis mon fichier Word » en bas de page : ce document contient aussi vos réponses sous une forme lisible par l’application. Vous pouvez l’enregistrer en PDF depuis Word, mais seul le fichier Word permet de reprendre.',{color:MUTED,italics:true,size:18},{spacing:{before:480}}));
+ kids.push(p('© 2026 Sameh Bekri – IKIGAISens™. Tous droits réservés. Inspiré du livre « Ikigai : le secret des Japonais pour une vie longue et heureuse » d’Héctor García et Francesc Miralles (2018).',{color:MUTED,size:18}));
+ const b64=btoa(unescape(encodeURIComponent(JSON.stringify(S))));
+ kids.push(new D.Paragraph({children:[r('IKIGAISENS-DATA:'+b64+':END',{vanish:true,size:2,color:'FFFFFF'})]}));
+ return new D.Document({creator:'Sameh Bekri – IKIGAISens™',title:'IKIGAISens – Mes réponses',
+  styles:{default:{document:{run:{font:'Calibri',size:22}}}},
+  sections:[{properties:{page:{margin:{top:1200,bottom:1200,left:1300,right:1300}}},
+   footers:{default:new D.Footer({children:[new D.Paragraph({alignment:D.AlignmentType.RIGHT,children:[r('IKIGAISens™ © 2026 Sameh Bekri   |   page ',{size:16,color:MUTED}),new D.TextRun({children:[D.PageNumber.CURRENT],size:16,color:MUTED})]})]})},
+   children:kids}]});}
+async function exportFile(btn){
  flush();
- const data=JSON.stringify({app:'IKIGAISens',version:1,exportedAt:new Date().toISOString(),state:S});
- const name='IKIGAISens-mes-reponses-'+new Date().toISOString().slice(0,10)+'.json';
- let dl=null;
- if(window.claude&&typeof window.claude.use==='function'){try{dl=await window.claude.use('downloads')}catch(e){dl=null}}
- if(dl){try{await dl.save({filename:name,data});toast('Fichier de sauvegarde enregistré. Gardez-le pour reprendre plus tard.')}catch(e){toast("Le fichier n'a pas été enregistré.")}return}
- try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1500);toast('Fichier de sauvegarde téléchargé. Gardez-le pour reprendre plus tard.')}
- catch(e){toast("Le téléchargement n'est pas possible dans ce navigateur.")}}
-function importFile(file){
- const r=new FileReader();
- r.onload=()=>{try{const o=JSON.parse(r.result);const st=o&&o.state;if(!st||typeof st.answers!=='object')throw 0;
-  S=Object.assign(blank(),st);S.view={v:'home'};S.savedAt=Date.now();writeLocal();cloudQueue(0);render();window.scrollTo({top:0});toast('Vos réponses ont été restaurées depuis le fichier.')}
-  catch(e){toast("Ce fichier n'est pas une sauvegarde IKIGAISens.")}};
- r.readAsText(file);}
+ const label=btn?btn.textContent:'';if(btn){btn.disabled=true;btn.textContent='Préparation du document…'}
+ try{
+  const D=await loadDocx();
+  const blob=await D.Packer.toBlob(buildDoc(D));
+  const name='IKIGAISens-mes-reponses-'+new Date().toISOString().slice(0,10)+'.docx';
+  let dl=null;
+  if(window.claude&&typeof window.claude.use==='function'){dl=await Promise.race([window.claude.use('downloads').catch(()=>null),new Promise(res=>setTimeout(()=>res(null),1500))])}
+  if(dl){try{await dl.save({filename:name,data:blob});toast('Document Word enregistré. Gardez-le pour reprendre plus tard.')}catch(e){toast(e&&e.code==='declined'?'Enregistrement annulé.':"Le document n'a pas pu être enregistré ici.")}}
+  else{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},2000);toast('Document Word téléchargé. Gardez-le pour reprendre plus tard.')}
+ }catch(e){toast("Le générateur Word n'a pas pu se charger. Vérifiez votre connexion et réessayez.")}
+ finally{if(btn){btn.disabled=false;btn.textContent=label}}}
+function restoreState(st){
+ if(!st||typeof st.answers!=='object')throw new Error('format');
+ S=Object.assign(blank(),st);S.view={v:'home'};S.savedAt=Date.now();writeLocal();cloudQueue(0);render();window.scrollTo({top:0});
+ toast('Vos réponses ont été restaurées depuis le fichier.');}
+async function importFile(file){
+ const bad=()=>toast("Ce fichier ne contient pas de réponses IKIGAISens. Choisissez le document Word enregistré depuis l'application.");
+ try{
+  if(/\.json$/i.test(file.name)){const o=JSON.parse(await file.text());return restoreState(o.state||o)}
+  const Z=await loadZip();const zip=await Z.loadAsync(await file.arrayBuffer());
+  const xml=zip.file('word/document.xml');if(!xml)return bad();
+  const txt=[...(await xml.async('string')).matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map(m=>m[1]).join('');
+  const m=txt.match(/IKIGAISENS-DATA:([A-Za-z0-9+/=]+):END/);if(!m)return bad();
+  restoreState(JSON.parse(decodeURIComponent(escape(atob(m[1])))));
+ }catch(e){bad()}}
+
 
 /* ---------- progress ---------- */
 function filled(q){
@@ -826,7 +903,7 @@ function railHTML(){
 function footHTML(){
  return `<footer class="foot"><div class="sig"><span><small>Conception</small>Sameh Bekri</span><p>© 2026 <b>Sameh Bekri</b> – IKIGAISens™. Tous droits réservés.</p><p>Inspiré du livre <i>Ikigai : le secret des Japonais pour une vie longue et heureuse</i> d'Héctor García et Francesc Miralles (2018)</p>
  <p class="foot-links"><button class="linkbtn" data-act="nav" data-to="apropos">À propos de la conceptrice</button><a href="mailto:samehbekri@gmail.com">✉ samehbekri@gmail.com</a></p></div>
- <div class="foot-r"><button class="linkbtn" data-act="export">Sauvegarder mes réponses dans un fichier</button><label class="linkbtn" for="importf">Reprendre depuis un fichier</label><input type="file" id="importf" accept=".json,application/json" hidden><button class="linkbtn" data-act="reset">Tout effacer et recommencer</button><div class="confirm" id="confirm" hidden><span>Effacer toutes vos réponses ? Cette action est définitive.</span><div><button class="btn sm" data-act="reset-yes">Effacer</button><button class="btn ghost sm" data-act="reset-no">Annuler</button></div></div></div></footer>`;}
+ <div class="foot-r"><button class="linkbtn" data-act="export">Enregistrer mes réponses (Word)</button><label class="linkbtn" for="importf">Reprendre depuis mon fichier Word</label><input type="file" id="importf" accept=".docx,.json,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden><button class="linkbtn" data-act="reset">Tout effacer et recommencer</button><div class="confirm" id="confirm" hidden><span>Effacer toutes vos réponses ? Cette action est définitive.</span><div><button class="btn sm" data-act="reset-yes">Effacer</button><button class="btn ghost sm" data-act="reset-no">Annuler</button></div></div></div></footer>`;}
 
 /* ---------- Mode d'emploi (interactif) ---------- */
 let G={step:0,field:0,zone:'aime+sait+val+act'};
@@ -850,7 +927,7 @@ const ZONES=['aime','sait','val','act','aime+sait','aime+val','sait+act','val+ac
 const TIPS=[
  ["var(--c-aime)","Sauvegarde automatique","Chaque réponse s'enregistre dès que vous l'écrivez. L'indicateur « Enregistré », en haut de page, le confirme. Vous pouvez fermer la page et reprendre plus tard."],
  ["var(--c-sait)","Confidentialité","Rien n'est envoyé : personne d'autre ne voit vos réponses. Pour les garder ailleurs, utilisez « Copier ma synthèse »."],
- ["var(--c-val)","Reprendre plus tard","À votre retour, l'accueil propose « Reprendre là où j'en étais ». Pour changer d'appareil, utilisez « Sauvegarder mes réponses dans un fichier » en bas de page."],
+ ["var(--c-val)","Reprendre plus tard","À votre retour, l'accueil propose « Reprendre là où j'en étais ». Pour changer d'appareil, utilisez « Enregistrer mes réponses (Word) » en bas de page."],
  ["var(--c-act)","Recommencer","« Tout effacer et recommencer », en bas de chaque page, remet le carnet à zéro après confirmation."]];
 function demoHTML(i){
  switch(i){
@@ -1073,7 +1150,7 @@ document.addEventListener('click',e=>{
  switch(a){
  case 'nav':go(b.dataset.to);break;
  case 'resume':{const L=S.last&&CBY[S.last.v]?S.last:null;if(L)go(L.v,L.s);else go((CIRCLES.find(x=>prog(x)<1)||CIRCLES[0]).id,0);break}
- case 'export':exportFile();break;
+ case 'export':exportFile(b);break;
  case 'help':if(b.dataset.f!=null){G.field=+b.dataset.f;go('guide',0,'g-fields')}else{G.step=+b.dataset.st;go('guide',0,'g-steps')}break;
  case 'gstep':G.step=+b.dataset.i;$('#g-steps-in').innerHTML=gStepsHTML();break;
  case 'gfield':G.field=+b.dataset.i;$('#g-fields-in').innerHTML=gFieldsHTML();break;
