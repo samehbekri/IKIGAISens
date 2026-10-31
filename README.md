@@ -5,8 +5,6 @@
 
 Le parcours guide la personne à travers les quatre cercles de l'ikigai. Il dessine ensuite une rosace personnelle où se révèlent la Passion, la Mission, la Profession, la Vocation et, au cœur, l'Ikigai.
 
-👉 **Ouvrir l'application :** `https://<votre-nom>.github.io/<nom-du-depot>/`
-
 ---
 
 ## Le parcours
@@ -40,14 +38,6 @@ Chaque cercle se termine par un **bilan** : la personne remplit un disque de mot
 
 ---
 
-## Mise en ligne sur GitHub Pages
-
-1. Déposez `index.html` (et ce `README.md`) à la racine du dépôt.
-2. Allez dans **Settings → Pages**.
-3. Dans **Source**, choisissez **Deploy from a branch**, la branche `main` et le dossier `/ (root)`, puis enregistrez.
-4. Après une à deux minutes, l'application est disponible à l'adresse `https://<votre-nom>.github.io/<nom-du-depot>/`.
-
-L'application tient dans **un seul fichier** (`index.html`). Il n'y a rien à installer ni à compiler. Elle fonctionne sur ordinateur, tablette et téléphone, en mode clair et en mode sombre.
 
 ### Ressources externes
 | Ressource | Usage |
